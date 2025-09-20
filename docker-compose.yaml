@@ -1,0 +1,15 @@
+services:
+  # This defines our MQTT broker service
+  broker:
+    image: eclipse-mosquitto:latest
+    container_name: mosquitto-broker
+    restart: unless-stopped
+    ports:
+      # Exposes the MQTT and WebSocket ports to your machine
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      # Mounts our local config, data, and log folders into the container
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log

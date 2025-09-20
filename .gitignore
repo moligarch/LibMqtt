@@ -1,0 +1,3 @@
+build/
+.vs/
+vcpkg_installed/
