@@ -11,6 +11,7 @@
 class MqttClient::MqttClientImpl : public virtual mqtt::callback {
     mqtt::async_client m_client;
     MqttClient::MessageCallback m_userCallback;
+    MqttClient::ErrorCallback m_errorCallback;
     std::atomic<bool> m_isConnected;
 
 public:
@@ -31,6 +32,9 @@ public:
     void connection_lost(const std::string& cause) override {
         std::cout << "--> Connection lost: " << cause << std::endl;
         m_isConnected = false;
+        if (m_errorCallback && !cause.empty()) {
+            m_errorCallback(-1, "Connection lost: " + cause);
+        }
     }
 
     // This is the most important callback. It is called when a message arrives
@@ -44,6 +48,10 @@ public:
 
     void SetUserCallback(MessageCallback callback) {
         m_userCallback = callback;
+    }
+
+    void SetUserErrorCallback(ErrorCallback callback) {
+        m_errorCallback = callback;
     }
 
     void Connect() {
@@ -60,8 +68,13 @@ public:
             m_client.connect(connOpts)->wait();
         }
         catch (const mqtt::exception& exc) {
-            std::cerr << "--> ERROR: Unable to connect to MQTT server: '"
-                << exc.what() << "'" << std::endl;
+            if (m_errorCallback) {
+                m_errorCallback(exc.get_return_code(), exc.what());
+            }
+            else {
+                std::cerr << "--> ERROR: Unable to connect to MQTT server: '"
+                    << exc.what() << "'" << std::endl;
+            }
         }
     }
 
@@ -74,14 +87,25 @@ public:
             m_client.disconnect()->wait();
         }
         catch (const mqtt::exception& exc) {
-            std::cerr << "--> ERROR during disconnect: " << exc.what() << std::endl;
+            if (m_errorCallback) {
+                m_errorCallback(exc.get_return_code(), exc.what());
+            }
+            else {
+                std::cerr << "--> ERROR during disconnect: " << exc.what() << std::endl;
+            }
         }
         m_isConnected = false;
     }
 
     void Subscribe(const std::string& topic) {
         if (!IsConnected()) {
-            std::cerr << "--> Cannot subscribe, client is not connected." << std::endl;
+            std::string errMsg = "Cannot subscribe, client is not connected.";
+            if (m_errorCallback) {
+                m_errorCallback(-1, errMsg);
+            }
+            else {
+                std::cerr << "--> " << errMsg << std::endl;
+            }
             return;
         }
         std::cout << "--> Subscribing to topic '" << topic << "'" << std::endl;
@@ -89,13 +113,24 @@ public:
             m_client.subscribe(topic, 1)->wait();
         }
         catch (const mqtt::exception& exc) {
-            std::cerr << "--> ERROR during subscribe: " << exc.what() << std::endl;
+            if (m_errorCallback) {
+                m_errorCallback(exc.get_return_code(), exc.what());
+            }
+            else {
+                std::cerr << "--> ERROR during subscribe: " << exc.what() << std::endl;
+            }
         }
     }
 
     void Publish(const std::string& topic, const std::string& payload) {
         if (!IsConnected()) {
-            std::cerr << "--> Cannot publish, client is not connected." << std::endl;
+            std::string errMsg = "Cannot publish, client is not connected.";
+            if (m_errorCallback) {
+                m_errorCallback(-1, errMsg);
+            }
+            else {
+                std::cerr << "--> " << errMsg << std::endl;
+            }
             return;
         }
         try {
@@ -104,7 +139,12 @@ public:
             m_client.publish(msg)->wait();
         }
         catch (const mqtt::exception& exc) {
-            std::cerr << "--> ERROR during publish: " << exc.what() << std::endl;
+            if (m_errorCallback) {
+                m_errorCallback(exc.get_return_code(), exc.what());
+            }
+            else {
+                std::cerr << "--> ERROR during publish: " << exc.what() << std::endl;
+            }
         }
     }
 
@@ -115,7 +155,6 @@ public:
 
 
 // --- Implementation of the public MqttClient class ---
-// These methods simply forward the calls to the implementation object.
 
 MqttClient::MqttClient(const std::string& brokerAddress, const std::string& clientId)
     : m_impl(std::make_unique<MqttClientImpl>(brokerAddress, clientId)) {
@@ -129,6 +168,10 @@ MqttClient::~MqttClient() {
 
 void MqttClient::SetCallback(MessageCallback callback) {
     m_impl->SetUserCallback(callback);
+}
+
+void MqttClient::SetErrorCallback(ErrorCallback callback) {
+    m_impl->SetUserErrorCallback(callback);
 }
 
 void MqttClient::Connect() {

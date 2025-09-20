@@ -10,6 +10,9 @@ public:
     // It receives the topic and the message payload as strings.
     using MessageCallback = std::function<void(const std::string& topic, const std::string& payload)>;
 
+    // Defines the signature for the error handling callback function.
+    using ErrorCallback = std::function<void(int errorCode, const std::string& errorMessage)>;
+
     /**
      * @brief Constructs the MqttClient.
      * @param brokerAddress The full address of the broker (e.g., "tcp://localhost:1883").
@@ -32,6 +35,12 @@ public:
      * @param callback The function to be called.
      */
     void SetCallback(MessageCallback callback);
+
+    /**
+     * @brief Sets the callback function that will be invoked when an error occurs.
+     * @param callback The function to be called.
+     */
+    void SetErrorCallback(ErrorCallback callback);
 
     /**
      * @brief Connects to the MQTT broker asynchronously.
