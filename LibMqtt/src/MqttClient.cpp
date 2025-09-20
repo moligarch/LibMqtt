@@ -5,10 +5,13 @@
 
 #include <iostream>
 #include <atomic>
+#include <mutex>
 
 // This is the actual implementation class, hidden from the user.
 // It inherits from Paho's callback classes to handle events.
 class MqttClient::MqttClientImpl : public virtual mqtt::callback {
+    std::mutex m_client_mutex;      // Protects Connect, Disconnect, Subscribe
+    std::mutex m_callback_mutex;    // Protects the std::function callback objects
     mqtt::async_client m_client;
     MqttClient::MessageCallback m_userCallback;
     MqttClient::ErrorCallback m_errorCallback;
@@ -30,31 +33,37 @@ public:
 
     // This is a Paho callback override. It is called when the connection is lost.
     void connection_lost(const std::string& cause) override {
-        std::cout << "--> Connection lost: " << cause << std::endl;
+        std::lock_guard<std::mutex> lock(m_callback_mutex);
         m_isConnected = false;
         if (m_errorCallback && !cause.empty()) {
             m_errorCallback(-1, "Connection lost: " + cause);
+        }
+        else if (!cause.empty()) {
+            std::cerr << "--> Connection lost: " << cause << std::endl;
         }
     }
 
     // This is the most important callback. It is called when a message arrives
     // on a topic that the client is subscribed to.
     void message_arrived(mqtt::const_message_ptr msg) override {
-        // If the user has set a callback, invoke it.
+        std::lock_guard<std::mutex> lock(m_callback_mutex);
         if (m_userCallback) {
             m_userCallback(msg->get_topic(), msg->get_payload_str());
         }
     }
 
     void SetUserCallback(MessageCallback callback) {
+        std::lock_guard<std::mutex> lock(m_callback_mutex);
         m_userCallback = callback;
     }
 
     void SetUserErrorCallback(ErrorCallback callback) {
+        std::lock_guard<std::mutex> lock(m_callback_mutex);
         m_errorCallback = callback;
     }
 
     void Connect() {
+        std::lock_guard<std::mutex> lock(m_client_mutex);
         if (IsConnected()) {
             return;
         }
@@ -68,6 +77,7 @@ public:
             m_client.connect(connOpts)->wait();
         }
         catch (const mqtt::exception& exc) {
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
             if (m_errorCallback) {
                 m_errorCallback(exc.get_return_code(), exc.what());
             }
@@ -79,6 +89,7 @@ public:
     }
 
     void Disconnect() {
+        std::lock_guard<std::mutex> lock(m_client_mutex);
         if (!IsConnected()) {
             return;
         }
@@ -87,6 +98,7 @@ public:
             m_client.disconnect()->wait();
         }
         catch (const mqtt::exception& exc) {
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
             if (m_errorCallback) {
                 m_errorCallback(exc.get_return_code(), exc.what());
             }
@@ -98,8 +110,10 @@ public:
     }
 
     void Subscribe(const std::string& topic) {
+        std::lock_guard<std::mutex> lock(m_client_mutex);
         if (!IsConnected()) {
             std::string errMsg = "Cannot subscribe, client is not connected.";
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
             if (m_errorCallback) {
                 m_errorCallback(-1, errMsg);
             }
@@ -113,6 +127,7 @@ public:
             m_client.subscribe(topic, 1)->wait();
         }
         catch (const mqtt::exception& exc) {
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
             if (m_errorCallback) {
                 m_errorCallback(exc.get_return_code(), exc.what());
             }
@@ -125,6 +140,7 @@ public:
     void Publish(const std::string& topic, const std::string& payload) {
         if (!IsConnected()) {
             std::string errMsg = "Cannot publish, client is not connected.";
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
             if (m_errorCallback) {
                 m_errorCallback(-1, errMsg);
             }
@@ -139,6 +155,7 @@ public:
             m_client.publish(msg)->wait();
         }
         catch (const mqtt::exception& exc) {
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
             if (m_errorCallback) {
                 m_errorCallback(exc.get_return_code(), exc.what());
             }
