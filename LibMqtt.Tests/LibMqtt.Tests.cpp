@@ -4,6 +4,7 @@
 #include <atomic>
 #include <string>
 #include <mutex>
+#include <thread>
 
 // Make sure this path is correct for your project structure
 #include "LibMqtt/MqttClient.h"
@@ -49,4 +50,113 @@ namespace MqttLibTests
 			Assert::IsTrue(capturedErrorMessage.find("TCP/TLS connect failure") != std::string::npos, L"Error message did not contain expected text.");
 		}
 	};
+
+    TEST_CLASS(ThreadSafetyTests)
+    {
+    public:
+        // Test 1: Verifies that the data path can handle high throughput
+        // without dropping messages and without deadlocking.
+        TEST_METHOD(HighThroughputDataTest)
+        {
+            // Arrange
+            const std::string BROKER_ADDRESS = "tcp://localhost:1883";
+            const std::string CLIENT_ID = "throughput-test-client";
+            const std::string TOPIC = "throughput/test";
+            MqttClient client(BROKER_ADDRESS, CLIENT_ID);
+
+            std::atomic<int> received_count = 0;
+            const int ITERS = 1000;
+
+            client.SetCallback([&](const std::string&, const std::string&) {
+                received_count++;
+                });
+
+            client.Connect();
+            Assert::IsTrue(WaitForConnection(client), L"Client failed to connect for test.");
+            client.Subscribe(TOPIC);
+
+            // Act
+            std::thread publisher([&]() {
+                for (int i = 0; i < ITERS; ++i) {
+                    client.Publish(TOPIC, "message");
+                }
+                });
+            publisher.join();
+
+            // Wait up to 2 seconds for all messages to be received by the callback.
+            bool allMessagesReceived = false;
+            for (int i = 0; i < 20 && !allMessagesReceived; ++i) {
+                if (received_count.load() == ITERS) {
+                    allMessagesReceived = true;
+                }
+                else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
+
+            // Assert
+            Assert::AreEqual(ITERS, received_count.load(), L"Not all published messages were received.");
+            client.Disconnect();
+        }
+
+        // Test 2: Verifies that it's safe to change callbacks while the
+        // Paho background thread is simultaneously trying to use them.
+        TEST_METHOD(ConfigurationSafetyTest)
+        {
+            // Arrange
+            const std::string BROKER_ADDRESS = "tcp://localhost:1883";
+            const std::string CLIENT_ID = "config-safety-test-client";
+            const std::string TOPIC = "config/test";
+            MqttClient client(BROKER_ADDRESS, CLIENT_ID);
+
+            std::atomic<int> received_count = 0;
+            const int ITERS = 500;
+
+            client.SetCallback([&](const std::string&, const std::string&) {
+                received_count++;
+                });
+
+            client.Connect();
+            Assert::IsTrue(WaitForConnection(client), L"Client failed to connect for test.");
+            client.Subscribe(TOPIC);
+
+            // Act
+            std::thread publisher([&]() {
+                for (int i = 0; i < ITERS; ++i) {
+                    client.Publish(TOPIC, "message");
+                }
+                });
+
+            std::thread configurer([&]() {
+                for (int i = 0; i < ITERS; ++i) {
+                    // The lock in SetCallback prevents a crash while the Paho
+                    // thread is trying to use the callback in message_arrived.
+                    client.SetCallback([&](const std::string&, const std::string&) {
+                        received_count++;
+                        });
+                }
+                });
+
+            publisher.join();
+            configurer.join();
+            client.Disconnect();
+
+            // Assert: The primary test is that it completes without crashing.
+            // We also check that at least some messages were processed.
+            Assert::IsTrue(received_count.load() > 0, L"No messages were received during the test.");
+        }
+
+    private:
+        // Helper function to wait for async connection
+        bool WaitForConnection(MqttClient& client, int timeout_sec = 5)
+        {
+            for (int i = 0; i < timeout_sec * 10; ++i) {
+                if (client.IsConnected()) {
+                    return true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            return false;
+        }
+    };
 }
