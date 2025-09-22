@@ -1,15 +1,25 @@
 services:
-  # This defines our MQTT broker service
-  broker:
+  # Container for all NO-AUTHENTICATION testing
+  broker-no-auth:
     image: eclipse-mosquitto:latest
-    container_name: mosquitto-broker
+    container_name: mosquitto-no-auth
     restart: unless-stopped
     ports:
-      # Exposes the MQTT and WebSocket ports to your machine
-      - "1883:1883"
-      - "9001:9001"
+      - "1883:1883" # Unsecure, No Auth
+      - "8884:8884" # Secure, No Auth
     volumes:
-      # Mounts our local config, data, and log folders into the container
-      - ./mosquitto/config:/mosquitto/config
-      - ./mosquitto/data:/mosquitto/data
-      - ./mosquitto/log:/mosquitto/log
+      - ./mosquitto/certs:/mosquitto/certs
+      - ./mosquitto/no_auth/config:/mosquitto/config
+
+  # Container for all WITH-AUTHENTICATION testing
+  broker-with-auth:
+    image: eclipse-mosquitto:latest
+    container_name: mosquitto-with-auth
+    restart: unless-stopped
+    ports:
+      - "1882:1883" # Unsecure, With Auth
+      - "8883:8883" # Secure, With Auth
+    volumes:
+      - ./mosquitto/certs:/mosquitto/certs
+      - ./mosquitto/with_auth/config:/mosquitto/config
+      - ./mosquitto/with_auth/auth:/mosquitto/auth

@@ -9,17 +9,23 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "MqqtTestApp", "MqqtTestApp\
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "mosquitto", "mosquitto", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "config", "config", "{A0090C93-CDC5-4603-ADA6-B091CA4792E9}"
-	ProjectSection(SolutionItems) = preProject
-		mosquitto\config\mosquitto.conf = mosquitto\config\mosquitto.conf
-	EndProjectSection
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
 	ProjectSection(SolutionItems) = preProject
 		docker-compose.yaml = docker-compose.yaml
+		vcpkg.json = vcpkg.json
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "LibMqtt.Tests", "LibMqtt.Tests\LibMqtt.Tests.vcxproj", "{62C238E9-EEE3-2F57-2B3C-3E666C312B02}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "no_auth", "no_auth", "{858FB90E-11F0-43AE-898C-BB514B337FF6}"
+	ProjectSection(SolutionItems) = preProject
+		mosquitto\no_auth\config\mosquitto.conf = mosquitto\no_auth\config\mosquitto.conf
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "with_auth", "with_auth", "{77D487B7-936D-4AF8-957B-3EBBE1D49879}"
+	ProjectSection(SolutionItems) = preProject
+		mosquitto\with_auth\config\mosquitto.conf = mosquitto\with_auth\config\mosquitto.conf
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -59,7 +65,8 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{02EA681E-C7D8-13C7-8484-4AC65E1B71E8} = {8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}
-		{A0090C93-CDC5-4603-ADA6-B091CA4792E9} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{858FB90E-11F0-43AE-898C-BB514B337FF6} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{77D487B7-936D-4AF8-957B-3EBBE1D49879} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {8A7D18BC-BEAF-45B7-8DAC-8C9401926E0F}
