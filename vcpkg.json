@@ -2,6 +2,6 @@
   "name": "mqtt-project",
   "version-string": "1.0.0",
   "dependencies": [
-    "paho-mqttpp3"
+    "openssl"
   ]
 }
