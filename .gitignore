@@ -1,4 +1,4 @@
 build/
 .vs/
 vcpkg_installed/
-/LibMqtt/LibMqtt.vcxproj.user
+/**/*.user
