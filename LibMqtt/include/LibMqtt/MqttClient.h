@@ -3,6 +3,28 @@
 #include <string>
 #include <functional>
 #include <memory>
+#include <optional>
+
+
+struct TlsOptions {
+    // Path to the Certificate Authority (CA) certificate file.
+    std::string ca_file_path;
+    // Path to the client's certificate file.
+    std::string client_cert_path;
+    // Path to the client's private key file.
+    std::string client_key_path;
+    // If true, the client will verify the server's certificate.
+    bool enable_server_cert_auth = true;
+};
+
+struct ConnectionOptions {
+    std::string username;
+    std::string password;
+    // Use std::optional to indicate if TLS should be used.
+    std::optional<TlsOptions> tls;
+};
+
+
 
 class MqttClient {
 public:
@@ -43,7 +65,13 @@ public:
     void SetErrorCallback(ErrorCallback callback);
 
     /**
-     * @brief Connects to the MQTT broker asynchronously.
+     * @brief Connects to the MQTT broker asynchronously with security options.
+     * @param options The connection options, including credentials and TLS settings.
+     */
+    void Connect(const ConnectionOptions& options);
+
+    /**
+     * @brief Connects to the MQTT broker asynchronously (unsecured).
      */
     void Connect();
 

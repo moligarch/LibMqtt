@@ -88,6 +88,50 @@ public:
         }
     }
 
+    void Connect(const ConnectionOptions& options) {
+        std::lock_guard<std::mutex> lock(m_client_mutex);
+        if (IsConnected()) {
+            return;
+        }
+        std::cout << "--> Connecting to broker..." << std::endl;
+        auto connOptsBuilder = mqtt::connect_options_builder()
+            .clean_session()
+            .automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));
+
+        // Set username and password if provided
+        if (!options.username.empty()) {
+            connOptsBuilder.user_name(options.username);
+            connOptsBuilder.password(options.password);
+        }
+
+        // Set TLS options if provided
+        if (options.tls.has_value()) {
+            std::cout << "--> Using TLS for connection." << std::endl;
+            const auto& tlsOptions = options.tls.value();
+            auto sslopts = mqtt::ssl_options_builder()
+                .trust_store(tlsOptions.ca_file_path)
+                .key_store(tlsOptions.client_cert_path)
+                .private_key(tlsOptions.client_key_path)
+                .enable_server_cert_auth(tlsOptions.enable_server_cert_auth)
+                .finalize();
+            connOptsBuilder.ssl(sslopts);
+        }
+
+        try {
+            m_client.connect(connOptsBuilder.finalize())->wait();
+        }
+        catch (const mqtt::exception& exc) {
+            std::lock_guard<std::mutex> cb_lock(m_callback_mutex);
+            if (m_errorCallback) {
+                m_errorCallback(exc.get_return_code(), exc.what());
+            }
+            else {
+                std::cerr << "--> ERROR: Unable to connect to MQTT server: '"
+                    << exc.what() << "'" << std::endl;
+            }
+        }
+    }
+
     void Disconnect() {
         std::lock_guard<std::mutex> lock(m_client_mutex);
         if (!IsConnected()) {
@@ -193,6 +237,10 @@ void MqttClient::SetErrorCallback(ErrorCallback callback) {
 
 void MqttClient::Connect() {
     m_impl->Connect();
+}
+
+void MqttClient::Connect(const ConnectionOptions& options) {
+    m_impl->Connect(options);
 }
 
 void MqttClient::Disconnect() {
