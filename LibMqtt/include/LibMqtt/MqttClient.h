@@ -41,6 +41,7 @@ public:
      * @param clientId A unique identifier for this client.
      */
     MqttClient(const std::string& brokerAddress, const std::string& clientId);
+    MqttClient(const std::wstring& brokerAddress, const std::wstring& clientId);
 
     /**
      * @brief Destructor. Ensures the client is disconnected cleanly.
@@ -85,6 +86,7 @@ public:
      * @param topic The topic to subscribe to.
      */
     void Subscribe(const std::string& topic);
+    void Subscribe(const std::wstring& topic);
 
     /**
      * @brief Publishes a message to a topic.
@@ -92,6 +94,7 @@ public:
      * @param payload The content of the message.
      */
     void Publish(const std::string& topic, const std::string& payload);
+    void Publish(const std::wstring& topic, const std::wstring& payload);
 
     /**
      * @brief Checks if the client is currently connected to the broker.

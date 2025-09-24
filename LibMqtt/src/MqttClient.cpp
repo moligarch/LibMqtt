@@ -1,11 +1,13 @@
 #include "LibMqtt/MqttClient.h"
 
-// Paho MQTT C++ library headers
-#include "mqtt/async_client.h"
-
 #include <iostream>
 #include <atomic>
 #include <mutex>
+
+// Paho MQTT C++ library headers
+#include "mqtt/async_client.h"
+
+#include "utils.h"
 
 // This is the actual implementation class, hidden from the user.
 // It inherits from Paho's callback classes to handle events.
@@ -221,6 +223,10 @@ MqttClient::MqttClient(const std::string& brokerAddress, const std::string& clie
     : m_impl(std::make_unique<MqttClientImpl>(brokerAddress, clientId)) {
 }
 
+MqttClient::MqttClient(const std::wstring& brokerAddress, const std::wstring& clientId)
+    : MqttClient(Utility::WstringToString(brokerAddress), Utility::WstringToString(clientId)) {
+}
+
 MqttClient::~MqttClient() {
     // The unique_ptr will be destroyed automatically, but we can ensure
     // a clean disconnect call.
@@ -251,8 +257,18 @@ void MqttClient::Subscribe(const std::string& topic) {
     m_impl->Subscribe(topic);
 }
 
+void MqttClient::Subscribe(const std::wstring& topic)
+{
+    m_impl->Subscribe(Utility::WstringToString(topic));
+}
+
 void MqttClient::Publish(const std::string& topic, const std::string& payload) {
     m_impl->Publish(topic, payload);
+}
+
+void MqttClient::Publish(const std::wstring& topic, const std::wstring& payload)
+{
+    m_impl->Publish(Utility::WstringToString(topic), Utility::WstringToString(payload));
 }
 
 bool MqttClient::IsConnected() const {
