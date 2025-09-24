@@ -7,6 +7,7 @@
 #include <vector>
 #include <filesystem>
 #include "LibMqtt/MqttClient.h"
+#include "utils.h"
 
 using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
@@ -90,6 +91,45 @@ namespace MqttLibTests
             Assert::IsFalse(tls.ca_file_path.empty(), L"CA certificate not found for test.");
             opts.tls = tls;
             TestPubSub(SECURE_WITH_AUTH_BROKER, "conn-secure-auth", opts);
+        }
+
+        TEST_METHOD(WString_Overload_ConnectPublishSubscribe)
+{
+            // Arrange
+            const std::wstring BROKER = L"tcp://localhost:1883";
+            const std::wstring CLIENT_ID = L"conn-wstring-overload";
+            MqttClient client(BROKER, CLIENT_ID); // Using wstring constructor
+
+            std::atomic<bool> messageReceived = false;
+            std::string receivedPayload; // Callback provides std::string
+            std::mutex mtx;
+
+            client.SetCallback([&](const std::string& topic, const std::string& payload) {
+                std::lock_guard<std::mutex> lock(mtx);
+                receivedPayload = payload;
+                messageReceived = true;
+            });
+
+            // Act
+            client.Connect();
+            Assert::IsTrue(WaitForConnection(client), L"Client failed to connect using wstring overload.");
+
+            const std::wstring TOPIC = L"connectivity/wstring";
+            const std::wstring MESSAGE = L"hello-wstring";
+
+            client.Subscribe(TOPIC); // Using wstring subscribe
+            client.Publish(TOPIC, MESSAGE); // Using wstring publish
+
+            // Wait for message
+            for (int i = 0; i < 20 && !messageReceived; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+
+            // Assert
+            Assert::IsTrue(messageReceived.load(), L"Did not receive published wstring message.");
+            // The received payload is a UTF-8 string, so we encode our wstring message for comparison
+            Assert::AreEqual(Utility::WstringToString(MESSAGE), receivedPayload, L"Payload did not match sent wstring message.");
+            client.Disconnect();
         }
 
     private:
