@@ -1,70 +1,74 @@
 #pragma once
-#include <atomic>
+/**
+ * @file PoolQueuePublisher.h
+ * @brief Bounded ring + worker pool publisher with backpressure/policy knobs.
+ *
+ * Semantics:
+ *  - Bounded per-worker ring (capacity = queue_capacity_per_worker).
+ *  - OverflowPolicy:
+ *      Block       -> backpressure producers until space.
+ *      DropNewest  -> reject incoming item.
+ *      DropOldest  -> overwrite oldest item (LRU-like freshness).
+ *  - DisconnectPolicy:
+ *      Wait        -> wait for connection; never drop (reliability-first).
+ *      Drop        -> discard tasks encountered while disconnected (QoS0 perf).
+ *  - Flush(): drains rings and waits for broker ACKs (QoS>=1) via AckTracker.
+ */
+
 #include <chrono>
-#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
-
+#include <vector>
+#include <memory>
 #include "LibMqtt/Core/Types.h"
 #include "LibMqtt/Core/Callbacks.h"
 
-namespace mqtt { class async_client; }
-
 namespace libmqtt::pub {
 
-    // Bounded-queue worker pool options.
-    // Keep queue_capacity_per_worker small to limit e2e latency by default.
     struct PoolQueueOptions {
-        int     workers = 0;          // 0 => use min(8, hw_concurrency)
-        size_t  queue_capacity_per_worker = 16;
+        int    workers = 0;                   ///< 0 => auto (min(hw, 8), at least 1)
+        size_t queue_capacity_per_worker = 0; ///< 0 => at least 1, recommended >= 64
+
+        enum class OverflowPolicy { Block, DropNewest, DropOldest };
+        OverflowPolicy overflow = OverflowPolicy::Block;
+
+        enum class DisconnectPolicy { Wait, Drop };
+        DisconnectPolicy on_disconnect = DisconnectPolicy::Wait;
     };
 
-    // PoolQueuePublisher
-    // ------------------
-    // Single MQTT connection shared by N worker threads.
-    // Enqueue() is blocking and bounded (NO user-space drops).
-    // Workers perform synchronous publish; for QoS>=1, Publish() waits for broker ACK.
-    // Non-throwing API: methods return Status; exceptions never escape.
     class PoolQueuePublisher {
     public:
-        PoolQueuePublisher(std::string brokerUri,
-            std::string clientId,
-            PoolQueueOptions opt = {});
+        PoolQueuePublisher(std::string broker_uri,
+            std::string client_id,
+            PoolQueueOptions opt);
         ~PoolQueuePublisher();
 
         PoolQueuePublisher(const PoolQueuePublisher&) = delete;
         PoolQueuePublisher& operator=(const PoolQueuePublisher&) = delete;
 
-        // Connect to broker (blocking until CONNACK or timeout inside).
         Status Connect(const std::optional<ConnectionOptions>& opts = std::nullopt) noexcept;
-
-        // Disconnect; stops workers and drains. Always returns Ok.
         Status Disconnect() noexcept;
+        bool   IsConnected() const noexcept;
 
-        bool IsConnected() const noexcept;
-
-        // Bounded blocking enqueue (no drop). Returns Disconnected if not connected.
         Status Enqueue(std::string_view topic,
             std::string_view payload,
             QoS qos,
             bool retained = false) noexcept;
 
-        // Enqueue (wstring -> UTF-8 via Utility::WstringToString)
+        // Windows convenience (UTF-16 input)
         Status Enqueue(const std::wstring& topic,
             const std::wstring& payload,
             QoS qos,
             bool retained = false) noexcept;
 
-        // Drain: waits until all queues are empty AND Paho pending tokens are zero.
-        // Returns Timeout if 'timeout' elapses before drain completes.
-        Status Flush(std::chrono::milliseconds timeout = std::chrono::seconds(10)) noexcept;
+        Status Flush(std::chrono::milliseconds timeout) noexcept;
 
-        void SetErrorCallback(ErrorCallback cb) noexcept;
+        void   SetErrorCallback(ErrorCallback cb) noexcept;
 
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;
     };
 
-} // namespace libmqtt::pub
+}  // namespace libmqtt::pub

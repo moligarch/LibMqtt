@@ -1,77 +1,47 @@
 #include "LibMqtt/Pub/PoolZeroPublisher.h"
 
+#define NOMINMAX
+#include <atomic>
+#include <mutex>
 #include <string>
-#include <vector>
-#include <thread>
+#include <string_view>
 
-#include "mqtt/async_client.h"
-#include "LibMqtt/Core/Connect.h"
+#include "LibMqtt/Core/Types.h"
 #include "LibMqtt/Core/Logging.h"
-#include "utils.h"
-
-using namespace std::chrono_literals;
+#include "LibMqtt/Core/ConnManager.h"
+#include "LibMqtt/Core/OptionsBuilder.h"
+#include "utils.h" // Utility::WstringToString
 
 namespace libmqtt::pub {
 
-    struct PoolZeroPublisher::Impl : public virtual mqtt::callback {
-        mqtt::async_client            client;
-        std::atomic<bool>             is_connected{ false };
+    // Zero-queue, single-connection, synchronous publish semantics.
+    // Event-driven (no sleeps). Reliability-first: waits for connection and retries once if a race occurs.
+    struct PoolZeroPublisher::Impl {
+        std::unique_ptr<ConnManager> cm;
         CallbackRCU<ErrorCallback>    err_cb;
 
-        explicit Impl(std::string brokerUri, std::string clientId)
-            : client(std::move(brokerUri), std::move(clientId))
-        {
-            client.set_callback(*this);
-        }
-
-        // mqtt::callback
-        void connected(const std::string&) override {
-            is_connected.store(true, std::memory_order_release);
-            LIBMQTT_LOG(LogLevel::Info, "PoolZeroPublisher: connected");
-        }
-        void connection_lost(const std::string& cause) override {
-            is_connected.store(false, std::memory_order_release);
-            if (auto cb = err_cb.get()) (*cb)(ResultCode::Disconnected, cause);
-            LIBMQTT_LOG(LogLevel::Warn, "PoolZeroPublisher: connection lost");
-        }
-        void message_arrived(mqtt::const_message_ptr) override {
-            // publisher doesn't consume messages
-        }
-        void delivery_complete(mqtt::delivery_token_ptr) override {
-            // token waited in Publish() for QoS>=1; nothing to do
+        explicit Impl(std::string broker, std::string cid) {
+            cm = std::make_unique<ConnManager>(std::move(broker), std::move(cid), &err_cb);
         }
     };
 
-    PoolZeroPublisher::PoolZeroPublisher(std::string brokerUri, std::string clientId)
+    PoolZeroPublisher::PoolZeroPublisher(std::string brokerUri,
+        std::string clientId)
         : impl_(std::make_unique<Impl>(std::move(brokerUri), std::move(clientId))) {
     }
 
-    PoolZeroPublisher::~PoolZeroPublisher() {
-        (void)Disconnect();
-    }
+    PoolZeroPublisher::~PoolZeroPublisher() { (void)Disconnect(); }
 
     Status PoolZeroPublisher::Connect(const std::optional<ConnectionOptions>& opts) noexcept {
-        auto st = ConnectBlocking(impl_->client, opts, 5s);
-        if (!st.ok()) {
-            if (auto cb = impl_->err_cb.get()) (*cb)(st.code, "PoolZeroPublisher: connect failed");
-            return st;
-        }
-        impl_->is_connected.store(impl_->client.is_connected(), std::memory_order_release);
-        if (!impl_->client.is_connected()) {
-            if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::ProtocolError, "PoolZeroPublisher: not connected");
-            return Status{ ResultCode::ProtocolError };
-        }
-        return Status{ ResultCode::Ok };
+        return impl_->cm->Connect(opts);
     }
 
     Status PoolZeroPublisher::Disconnect() noexcept {
-        auto st = DisconnectQuiet(impl_->client);
-        impl_->is_connected.store(false, std::memory_order_release);
-        return st;
+        return impl_->cm->Disconnect();
     }
 
     bool PoolZeroPublisher::IsConnected() const noexcept {
-        return impl_->client.is_connected();
+        return impl_->cm->latch().is_connected();
     }
 
     Status PoolZeroPublisher::Publish(std::string_view topic,
@@ -79,34 +49,39 @@ namespace libmqtt::pub {
         QoS qos,
         bool retained) noexcept
     {
-        if (!impl_->client.is_connected()) {
-            if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::Disconnected, "PoolZeroPublisher: not connected");
-            return Status{ ResultCode::Disconnected };
-        }
+        // Event-driven: wait until connection is up (no sleeps).
+        impl_->cm->latch().wait_connected();
 
-        try {
-            // Build message without extra copies at callsite.
-            auto msg = mqtt::make_message(std::string(topic), payload.data(), payload.size());
-            msg->set_qos(static_cast<int>(qos));
-            msg->set_retained(retained);
+        auto& cli = impl_->cm->client();
 
-            auto tok = impl_->client.publish(msg);
-
-            if (qos >= QoS::AtLeastOnce) {
-                tok->wait(); // broker ACK (PUBACK / PUBCOMP)
+        auto do_pub = [&](bool wait_ack) -> Status {
+            try {
+                auto msg = mqtt::make_message(std::string(topic),
+                    std::string(payload.data(), payload.size()));
+                msg->set_qos(static_cast<int>(qos));
+                msg->set_retained(retained);
+                auto tok = cli.publish(msg);
+                if (wait_ack) tok->wait(); // QoS1/2 sync with broker
+                return Status{ ResultCode::Ok };
             }
-            return Status{ ResultCode::Ok };
-        }
-        catch (const mqtt::exception& e) {
-            LIBMQTT_LOG(LogLevel::Error, std::string("PoolZeroPublisher: publish exception: ") + e.what());
-            if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::ProtocolError, e.what());
-            return Status{ ResultCode::ProtocolError };
-        }
-        catch (...) {
-            LIBMQTT_LOG(LogLevel::Error, "PoolZeroPublisher: publish unknown exception");
-            if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::Unknown, "unknown publish error");
-            return Status{ ResultCode::Unknown };
-        }
+            catch (const mqtt::exception& e) {
+                if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::ProtocolError, e.what());
+                return Status{ ResultCode::Disconnected };
+            }
+            catch (...) {
+                if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::Unknown, "unknown publish error");
+                return Status{ ResultCode::Unknown };
+            }
+            };
+
+        const bool wait_ack = (qos >= QoS::AtLeastOnce);
+
+        // First try
+        if (auto st = do_pub(wait_ack); st.ok()) return st;
+
+        // Race with disconnect: wait for reconnect once and retry.
+        impl_->cm->latch().wait_connected();
+        return do_pub(wait_ack);
     }
 
     Status PoolZeroPublisher::Publish(const std::wstring& topic,
@@ -119,41 +94,6 @@ namespace libmqtt::pub {
         if ((t.empty() && !topic.empty()) || (p.empty() && !payload.empty()))
             return Status{ ResultCode::ProtocolError };
         return Publish(t, p, qos, retained);
-    }
-
-    Status PoolZeroPublisher::Flush(std::chrono::milliseconds timeout) noexcept {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        try {
-            for (;;) {
-                auto pend = impl_->client.get_pending_delivery_tokens();
-                if (pend.empty()) break;
-
-                // Opportunistically wait on currently pending tokens (bounded).
-                // Avoid long waits on every token; poll quickly and yield if needed.
-                for (auto& t : pend) {
-                    if (!t) continue;
-                    // Wait a tiny slice to avoid blocking forever when new tokens appear.
-                    t->wait_for(std::chrono::milliseconds(1));
-                }
-
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    LIBMQTT_LOG(LogLevel::Warn, "PoolZeroPublisher: flush timeout");
-                    return Status{ ResultCode::Timeout };
-                }
-                std::this_thread::yield();
-            }
-            return Status{ ResultCode::Ok };
-        }
-        catch (const mqtt::exception& e) {
-            LIBMQTT_LOG(LogLevel::Error, std::string("PoolZeroPublisher: flush exception: ") + e.what());
-            if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::ProtocolError, e.what());
-            return Status{ ResultCode::ProtocolError };
-        }
-        catch (...) {
-            LIBMQTT_LOG(LogLevel::Error, "PoolZeroPublisher: flush unknown exception");
-            if (auto cb = impl_->err_cb.get()) (*cb)(ResultCode::Unknown, "unknown flush error");
-            return Status{ ResultCode::Unknown };
-        }
     }
 
     void PoolZeroPublisher::SetErrorCallback(ErrorCallback cb) noexcept {

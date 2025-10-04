@@ -1,72 +1,61 @@
 #pragma once
-#include <atomic>
+/**
+ * @file MultiClientPublisher.h
+ * @brief Queue-less publisher that load-balances across N connections.
+ *
+ * Semantics:
+ *  - No internal queue; publish selects a connection round-robin.
+ *  - On transient disconnect at publish, waits for reconnect once and retries once.
+ *  - QoS0: fire-and-forget.
+ *  - QoS1/2: Publish() blocks for broker ACK; Flush() waits for any interleaved acks.
+ */
+
 #include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
-
+#include <memory>
 #include "LibMqtt/Core/Types.h"
 #include "LibMqtt/Core/Callbacks.h"
 
 namespace libmqtt::pub {
 
-    // Options controlling the number of parallel connections
     struct MultiClientOptions {
-        int connections = 0; // 0 => use min(8, hw_concurrency)
+        int connections = 0;  ///< 0 => auto (min(hw, 8), at least 1)
     };
 
-    // MultiClientPublisher
-    // --------------------
-    // K separate MQTT connections. Each Publish() selects a connection via
-    // lock-free round-robin. QoS>=1 waits on the delivery token (broker ACK).
-    //
-    // Non-throwing API: all methods return Status; no exceptions escape.
-    //
-    // Reliability:
-    //  - QoS0  : fire-and-forget on the chosen connection
-    //  - QoS1/2: publish() blocks until PUBACK/PUBCOMP (broker accepted)
-    // Backpressure comes from the synchronous wait on QoS>=1; there is no
-    // user-space queue here.
     class MultiClientPublisher {
     public:
-        MultiClientPublisher(std::string brokerUri,
-            std::string clientIdPrefix,
-            MultiClientOptions opt = {});
+        MultiClientPublisher(std::string broker_uri,
+            std::string client_id_base,
+            MultiClientOptions opt);
         ~MultiClientPublisher();
 
         MultiClientPublisher(const MultiClientPublisher&) = delete;
         MultiClientPublisher& operator=(const MultiClientPublisher&) = delete;
 
-        // Establish all connections (blocking until CONNACK for each).
         Status Connect(const std::optional<ConnectionOptions>& opts = std::nullopt) noexcept;
-
-        // Disconnect all. Always returns Ok.
         Status Disconnect() noexcept;
+        bool   IsConnected() const noexcept;
 
-        // All-connected state (authoritative via Paho)
-        bool IsConnected() const noexcept;
-
-        // Publish on one connection selected via RR.
         Status Publish(std::string_view topic,
             std::string_view payload,
             QoS qos,
             bool retained = false) noexcept;
 
-        // Publish (wstring -> UTF-8 via Utility::WstringToString)
+        // Windows convenience (UTF-16 input)
         Status Publish(const std::wstring& topic,
             const std::wstring& payload,
             QoS qos,
             bool retained = false) noexcept;
 
-        // Drain all pending deliveries across all connections (best-effort).
-        Status Flush(std::chrono::milliseconds timeout = std::chrono::seconds(10)) noexcept;
+        Status Flush(std::chrono::milliseconds timeout) noexcept;
 
-        // Error callback invoked on connection_lost or protocol errors.
-        void SetErrorCallback(ErrorCallback cb) noexcept;
+        void   SetErrorCallback(ErrorCallback cb) noexcept;
 
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;
     };
 
-} // namespace libmqtt::pub
+}  // namespace libmqtt::pub

@@ -1,176 +1,172 @@
 #include "LibMqtt/Pub/MultiClientPublisher.h"
+
 #define NOMINMAX
-#include <algorithm>
-#include <memory>
+#include <atomic>
+#include <deque>
+#include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
+#include <memory>
 
-#include "mqtt/async_client.h"
-#include "LibMqtt/Core/Connect.h"
+#include "LibMqtt/Core/Types.h"
 #include "LibMqtt/Core/Logging.h"
+#include "LibMqtt/Core/ConnManager.h"
+#include "LibMqtt/Core/AckTracker.h"
+#include "LibMqtt/Core/OptionsBuilder.h"
 #include "utils.h"
-
-using namespace std::chrono_literals;
 
 namespace libmqtt::pub {
 
     struct MultiClientPublisher::Impl {
-        struct Conn : public virtual mqtt::callback {
-            mqtt::async_client     client;
-            std::atomic<bool>      is_connected{ false };
-            // Non-owning backref to publisher-level error callback holder
-            CallbackRCU<ErrorCallback>* err_cb_rcu{ nullptr };
+        std::string                 broker;
+        std::string                 idbase;
+        MultiClientOptions          opt;
 
-            Conn(std::string broker, std::string clientId, CallbackRCU<ErrorCallback>* cb_rcu)
-                : client(std::move(broker), std::move(clientId)), err_cb_rcu(cb_rcu) {
-                client.set_callback(*this);
-            }
-
-            // mqtt::callback
-            void connected(const std::string&) override {
-                is_connected.store(true, std::memory_order_release);
-                LIBMQTT_LOG(LogLevel::Info, "MultiClient: connected");
-            }
-            void connection_lost(const std::string& cause) override {
-                is_connected.store(false, std::memory_order_release);
-                if (err_cb_rcu) {
-                    if (auto cb = err_cb_rcu->get()) (*cb)(ResultCode::Disconnected, cause);
-                }
-                LIBMQTT_LOG(LogLevel::Warn, "MultiClient: connection lost");
-            }
-            void message_arrived(mqtt::const_message_ptr) override {
-                // publisher doesn't consume messages
-            }
-            void delivery_complete(mqtt::delivery_token_ptr) override {
-                // QoS>=1 waits in Publish(); nothing to do here.
-            }
+        struct Conn {
+            std::mutex                  mu;   // order per connection
+            std::unique_ptr<ConnManager> cm;  // owns async_client + connection state
         };
 
-        std::string                    broker_;
-        std::string                    prefix_;
-        int                            n_{ 0 };
-        std::vector<std::unique_ptr<Conn>> conns_;
-        CallbackRCU<ErrorCallback>     err_cb_;
-        std::atomic<uint32_t>          rr_{ 0 };
+        // Use pointers in a vector (or std::deque<Conn>) to avoid moving a type with std::mutex.
+        std::vector<std::unique_ptr<Conn>> conns;
 
-        explicit Impl(std::string broker, std::string prefix, MultiClientOptions opt)
-            : broker_(std::move(broker)), prefix_(std::move(prefix)) {
-            int hw = static_cast<int>(std::thread::hardware_concurrency());
-            if (hw <= 0) hw = 8;
-            n_ = opt.connections > 0 ? opt.connections : std::min(8, hw);
-            if (n_ <= 0) n_ = 1;
-        }
+        std::atomic<uint32_t>       rr{ 0 };
+        std::optional<ConnectionOptions> saved_opts;
+        CallbackRCU<ErrorCallback>  err_cb;
 
-        // Return index of a connected connection using RR; -1 if none connected
-        int pick_connected() noexcept {
-            if (conns_.empty()) return -1;
-            uint32_t start = rr_.fetch_add(1, std::memory_order_relaxed);
-            int N = static_cast<int>(conns_.size());
-            int i0 = static_cast<int>(start % static_cast<uint32_t>(N));
-            for (int k = 0; k < N; ++k) {
-                int idx = (i0 + k) % N;
-                if (conns_[idx]->client.is_connected()) return idx;
-            }
-            return -1;
+        AckTracker                  ack;     // QoS>=1 flush tracker
+
+        explicit Impl(std::string b, std::string idb, MultiClientOptions o)
+            : broker(std::move(b)), idbase(std::move(idb)), opt(o) {
         }
     };
 
     MultiClientPublisher::MultiClientPublisher(std::string brokerUri,
-        std::string clientIdPrefix,
+        std::string clientIdBase,
         MultiClientOptions opt)
-        : impl_(std::make_unique<Impl>(std::move(brokerUri), std::move(clientIdPrefix), opt)) {
+        : impl_(std::make_unique<Impl>(std::move(brokerUri), std::move(clientIdBase), opt)) {
     }
 
-    MultiClientPublisher::~MultiClientPublisher() {
-        (void)Disconnect();
-    }
+    MultiClientPublisher::~MultiClientPublisher() { (void)Disconnect(); }
 
     Status MultiClientPublisher::Connect(const std::optional<ConnectionOptions>& opts) noexcept {
-        // Build K connections and connect them one by one
-        impl_->conns_.clear();
-        impl_->conns_.reserve(static_cast<size_t>(impl_->n_));
+        impl_->saved_opts = opts;
 
-        for (int i = 0; i < impl_->n_; ++i) {
-            std::string cid = impl_->prefix_ + "-" + std::to_string(i);
-            auto c = std::make_unique<Impl::Conn>(impl_->broker_, cid, &impl_->err_cb_);
-            impl_->conns_.emplace_back(std::move(c));
+        int n = impl_->opt.connections;
+        if (n <= 0) {
+            int hw = (int)std::thread::hardware_concurrency();
+            if (hw <= 0) hw = 4;
+            n = std::max(1, std::min(8, hw));
         }
 
-        // Connect all; if any fails, disconnect all and report error
-        for (auto& c : impl_->conns_) {
-            auto st = ConnectBlocking(c->client, opts, 5s);
-            if (!st.ok() || !c->client.is_connected()) {
-                // clean up already-connected ones
-                for (auto& d : impl_->conns_) DisconnectQuiet(d->client);
-                LIBMQTT_LOG(LogLevel::Error, "MultiClient: connect failure");
-                return st.ok() ? Status{ ResultCode::ProtocolError } : st;
+        impl_->conns.clear();
+        impl_->conns.reserve((size_t)n);
+
+        for (int i = 0; i < n; ++i) {
+            std::string cid = impl_->idbase + "-" + std::to_string(i);
+            auto c = std::make_unique<Impl::Conn>();
+            c->cm = std::make_unique<ConnManager>(impl_->broker, cid, &impl_->err_cb);
+
+            auto st = c->cm->Connect(impl_->saved_opts);
+            if (!st.ok()) {
+                for (auto& x : impl_->conns) { if (x && x->cm) (void)x->cm->Disconnect(); }
+                impl_->conns.clear();
+                return st;
             }
-            c->is_connected.store(true, std::memory_order_release);
+            impl_->conns.emplace_back(std::move(c));
         }
-
         return Status{ ResultCode::Ok };
     }
 
     Status MultiClientPublisher::Disconnect() noexcept {
-        for (auto& c : impl_->conns_) {
-            (void)DisconnectQuiet(c->client);
-            c->is_connected.store(false, std::memory_order_release);
+        for (auto& c : impl_->conns) {
+            if (c && c->cm) (void)c->cm->Disconnect();
         }
+        impl_->conns.clear();
         return Status{ ResultCode::Ok };
     }
 
     bool MultiClientPublisher::IsConnected() const noexcept {
-        if (impl_->conns_.empty()) return false;
-        for (auto& c : impl_->conns_) {
-            if (!c->client.is_connected()) return false;
+        for (auto& c : impl_->conns) {
+            if (c && c->cm && c->cm->latch().is_connected())
+                return true;
         }
-        return true;
+        return false;
     }
 
     Status MultiClientPublisher::Publish(std::string_view topic,
         std::string_view payload,
-        QoS qos,
-        bool retained) noexcept
+        QoS qos, bool retained) noexcept
     {
-        int idx = impl_->pick_connected();
-        if (idx < 0) {
-            if (auto cb = impl_->err_cb_.get())
-                (*cb)(ResultCode::Disconnected, "MultiClient: no active connection");
-            return Status{ ResultCode::Disconnected };
-        }
+        if (impl_->conns.empty()) return Status{ ResultCode::Disconnected };
 
-        auto& cli = impl_->conns_[idx]->client;
+        const size_t n = impl_->conns.size();
+        const uint32_t start = impl_->rr.fetch_add(1, std::memory_order_relaxed);
 
-        try {
-            auto msg = mqtt::make_message(std::string(topic), payload.data(), payload.size());
-            msg->set_qos(static_cast<int>(qos));
-            msg->set_retained(retained);
+        auto try_on = [&](size_t idx) -> Status {
+            auto& cn = *impl_->conns[idx];
+            std::lock_guard<std::mutex> lk(cn.mu);
 
-            auto tok = cli.publish(msg);
-            if (qos >= QoS::AtLeastOnce) {
-                tok->wait(); // Broker ACK (PUBACK/PUBCOMP)
+            // Event-driven: ensure connected before publish (no sleeps)
+            cn.cm->latch().wait_connected();
+
+            auto& cli = cn.cm->client();
+            try {
+                auto msg = mqtt::make_message(std::string(topic),
+                    std::string(payload.data(), payload.size()));
+                msg->set_qos((int)qos);
+                msg->set_retained(retained);
+
+                auto tok = cli.publish(msg);
+
+                if (qos >= QoS::AtLeastOnce) {
+                    impl_->ack.inc();
+                    try { tok->wait(); }
+                    catch (...) { impl_->ack.dec_notify(); throw; }
+                    impl_->ack.dec_notify();
+                }
+                return Status{ ResultCode::Ok };
             }
-            return Status{ ResultCode::Ok };
+            catch (const mqtt::exception&) {
+                // Likely raced with disconnect; wait for reconnect once and retry once.
+                cn.cm->latch().wait_connected();
+                try {
+                    auto msg2 = mqtt::make_message(std::string(topic),
+                        std::string(payload.data(), payload.size()));
+                    msg2->set_qos((int)qos);
+                    msg2->set_retained(retained);
+                    auto tok2 = cli.publish(msg2);
+                    if (qos >= QoS::AtLeastOnce) {
+                        impl_->ack.inc();
+                        try { tok2->wait(); }
+                        catch (...) { impl_->ack.dec_notify(); throw; }
+                        impl_->ack.dec_notify();
+                    }
+                    return Status{ ResultCode::Ok };
+                }
+                catch (...) {
+                    return Status{ ResultCode::Disconnected };
+                }
+            }
+            catch (...) {
+                return Status{ ResultCode::Unknown };
+            }
+            };
+
+        // Try selected connection, then failover across the rest.
+        for (size_t k = 0; k < n; ++k) {
+            size_t idx = (start + k) % n;
+            auto st = try_on(idx);
+            if (st.ok()) return st;
         }
-        catch (const mqtt::exception& e) {
-            LIBMQTT_LOG(LogLevel::Error, std::string("MultiClient: publish exception: ") + e.what());
-            if (auto cb = impl_->err_cb_.get())
-                (*cb)(ResultCode::ProtocolError, e.what());
-            return Status{ ResultCode::ProtocolError };
-        }
-        catch (...) {
-            LIBMQTT_LOG(LogLevel::Error, "MultiClient: publish unknown exception");
-            if (auto cb = impl_->err_cb_.get())
-                (*cb)(ResultCode::Unknown, "unknown publish error");
-            return Status{ ResultCode::Unknown };
-        }
+        if (auto cb = impl_->err_cb.get())
+            (*cb)(ResultCode::Disconnected, "publish failed on all connections");
+        return Status{ ResultCode::Disconnected };
     }
 
     Status MultiClientPublisher::Publish(const std::wstring& topic,
         const std::wstring& payload,
-        QoS qos,
-        bool retained) noexcept
+        QoS qos, bool retained) noexcept
     {
         const std::string t = Utility::WstringToString(topic);
         const std::string p = Utility::WstringToString(payload);
@@ -180,42 +176,12 @@ namespace libmqtt::pub {
     }
 
     Status MultiClientPublisher::Flush(std::chrono::milliseconds timeout) noexcept {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        try {
-            for (;;) {
-                bool any_pending = false;
-                for (auto& c : impl_->conns_) {
-                    auto pend = c->client.get_pending_delivery_tokens();
-                    if (!pend.empty()) any_pending = true;
-                    for (auto& t : pend) {
-                        if (!t) continue;
-                        t->wait_for(std::chrono::milliseconds(1));
-                    }
-                }
-                if (!any_pending) return Status{ ResultCode::Ok };
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    LIBMQTT_LOG(LogLevel::Warn, "MultiClient: flush timeout");
-                    return Status{ ResultCode::Timeout };
-                }
-                std::this_thread::yield();
-            }
-        }
-        catch (const mqtt::exception& e) {
-            LIBMQTT_LOG(LogLevel::Error, std::string("MultiClient: flush exception: ") + e.what());
-            if (auto cb = impl_->err_cb_.get())
-                (*cb)(ResultCode::ProtocolError, e.what());
-            return Status{ ResultCode::ProtocolError };
-        }
-        catch (...) {
-            LIBMQTT_LOG(LogLevel::Error, "MultiClient: flush unknown exception");
-            if (auto cb = impl_->err_cb_.get())
-                (*cb)(ResultCode::Unknown, "unknown flush error");
-            return Status{ ResultCode::Unknown };
-        }
+        // QoS0: nothing to wait on; QoS>=1: wait for tracked in-flight == 0
+        return impl_->ack.wait_zero(timeout);
     }
 
     void MultiClientPublisher::SetErrorCallback(ErrorCallback cb) noexcept {
-        impl_->err_cb_.set(std::move(cb));
+        impl_->err_cb.set(std::move(cb));
     }
 
 } // namespace libmqtt::pub

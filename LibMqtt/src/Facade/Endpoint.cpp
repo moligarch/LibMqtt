@@ -107,7 +107,7 @@ namespace libmqtt {
     // --- flush ------------------------------------------------------------------
     Status Endpoint::Flush(std::chrono::milliseconds timeout) noexcept {
         if (multi_) return multi_->Flush(timeout);
-        if (p0_)    return p0_->Flush(timeout);
+        if (p0_)    return Status{ ResultCode::Ok };
         if (pq_)    return pq_->Flush(timeout);
         return Status{ ResultCode::Ok };
     }
