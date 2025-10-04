@@ -19,11 +19,26 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\LibMqtt\MqttClient.h" />
+    <ClInclude Include="include\LibMqtt\Core\Callbacks.h" />
+    <ClInclude Include="include\LibMqtt\Core\Connect.h" />
+    <ClInclude Include="include\LibMqtt\Core\Logging.h" />
+    <ClInclude Include="include\LibMqtt\Core\Types.h" />
+    <ClInclude Include="include\LibMqtt\Facade\Endpoint.h" />
+    <ClInclude Include="include\LibMqtt\Pub\MultiClientPublisher.h" />
+    <ClInclude Include="include\LibMqtt\Pub\PoolQueuePublisher.h" />
+    <ClInclude Include="include\LibMqtt\Pub\PoolZeroPublisher.h" />
+    <ClInclude Include="include\LibMqtt\Sub\Subscriber.h" />
     <ClInclude Include="include\utils.h" />
+    <ClInclude Include="include\LibMqtt\Core\SpinLock.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\MqttClient.cpp" />
+    <ClCompile Include="src\Core\Connect.cpp" />
+    <ClCompile Include="src\Core\Logging.cpp" />
+    <ClCompile Include="src\Facade\Endpoint.cpp" />
+    <ClCompile Include="src\Pub\MultiClientPublisher.cpp" />
+    <ClCompile Include="src\Pub\PoolQueuePublisher.cpp" />
+    <ClCompile Include="src\Pub\PoolZeroPublisher.cpp" />
+    <ClCompile Include="src\Sub\Subscriber.cpp" />
     <ClCompile Include="src\utils.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
