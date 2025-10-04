@@ -5,8 +5,6 @@ VisualStudioVersion = 17.14.36401.2
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "LibMqtt", "LibMqtt\LibMqtt.vcxproj", "{0D9F3D63-8F6F-45B4-909C-E5C9264439FE}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "MqqtTestApp", "MqqtTestApp\MqqtTestApp.vcxproj", "{60E6494A-8671-4145-8F8E-2121DC5DA2E8}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "mosquitto", "mosquitto", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
@@ -27,6 +25,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "with_auth", "with_auth", "{
 		mosquitto\with_auth\config\mosquitto.conf = mosquitto\with_auth\config\mosquitto.conf
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "LibMqtt.Examples", "LibMqtt.Examples\LibMqtt.Examples.vcxproj", "{A791D5E5-CC21-4232-A568-0D8D5B741D98}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "LibMqtt.Bench", "LibMqtt.Bench\LibMqtt.Bench.vcxproj", "{D486E13A-BD1F-4714-8128-F9B80E35F1EB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -43,14 +45,6 @@ Global
 		{0D9F3D63-8F6F-45B4-909C-E5C9264439FE}.Release|x64.Build.0 = Release|x64
 		{0D9F3D63-8F6F-45B4-909C-E5C9264439FE}.Release|x86.ActiveCfg = Release|Win32
 		{0D9F3D63-8F6F-45B4-909C-E5C9264439FE}.Release|x86.Build.0 = Release|Win32
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Debug|x64.ActiveCfg = Debug|x64
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Debug|x64.Build.0 = Debug|x64
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Debug|x86.ActiveCfg = Debug|Win32
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Debug|x86.Build.0 = Debug|Win32
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Release|x64.ActiveCfg = Release|x64
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Release|x64.Build.0 = Release|x64
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Release|x86.ActiveCfg = Release|Win32
-		{60E6494A-8671-4145-8F8E-2121DC5DA2E8}.Release|x86.Build.0 = Release|Win32
 		{62C238E9-EEE3-2F57-2B3C-3E666C312B02}.Debug|x64.ActiveCfg = Debug|x64
 		{62C238E9-EEE3-2F57-2B3C-3E666C312B02}.Debug|x64.Build.0 = Debug|x64
 		{62C238E9-EEE3-2F57-2B3C-3E666C312B02}.Debug|x86.ActiveCfg = Debug|Win32
@@ -59,6 +53,22 @@ Global
 		{62C238E9-EEE3-2F57-2B3C-3E666C312B02}.Release|x64.Build.0 = Release|x64
 		{62C238E9-EEE3-2F57-2B3C-3E666C312B02}.Release|x86.ActiveCfg = Release|Win32
 		{62C238E9-EEE3-2F57-2B3C-3E666C312B02}.Release|x86.Build.0 = Release|Win32
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Debug|x64.ActiveCfg = Debug|x64
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Debug|x64.Build.0 = Debug|x64
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Debug|x86.ActiveCfg = Debug|Win32
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Debug|x86.Build.0 = Debug|Win32
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Release|x64.ActiveCfg = Release|x64
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Release|x64.Build.0 = Release|x64
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Release|x86.ActiveCfg = Release|Win32
+		{A791D5E5-CC21-4232-A568-0D8D5B741D98}.Release|x86.Build.0 = Release|Win32
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Debug|x64.ActiveCfg = Debug|x64
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Debug|x64.Build.0 = Debug|x64
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Debug|x86.ActiveCfg = Debug|Win32
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Debug|x86.Build.0 = Debug|Win32
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Release|x64.ActiveCfg = Release|x64
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Release|x64.Build.0 = Release|x64
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Release|x86.ActiveCfg = Release|Win32
+		{D486E13A-BD1F-4714-8128-F9B80E35F1EB}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
